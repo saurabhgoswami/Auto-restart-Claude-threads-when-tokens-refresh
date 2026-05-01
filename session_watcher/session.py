@@ -26,12 +26,18 @@ def _cwd_to_project_key(cwd: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "-", cwd)
 
 
-def _read_first_message(session_id: str, cwd: str) -> str | None:
-    """Return the first user message text from a session's JSONL file."""
+def _read_session_title(session_id: str, cwd: str) -> str | None:
+    """Return the best title for a session from its JSONL file.
+
+    Priority: ai-title (matches what Claude Code shows in sidebar)
+              → first user message (fallback)
+    """
     key = _cwd_to_project_key(cwd)
     jsonl_path = PROJECTS_DIR / key / f"{session_id}.jsonl"
     if not jsonl_path.exists():
         return None
+    ai_title = None
+    first_msg = None
     try:
         with jsonl_path.open() as fh:
             for line in fh:
@@ -39,26 +45,26 @@ def _read_first_message(session_id: str, cwd: str) -> str | None:
                     d = json.loads(line.strip())
                 except json.JSONDecodeError:
                     continue
-                if d.get("type") != "user":
-                    continue
-                msg = d.get("message", {})
-                content = msg.get("content", "")
-                if isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and part.get("type") == "text":
-                            content = part.get("text", "")
-                            break
-                if content and isinstance(content, str):
-                    return content.strip()
+                if d.get("type") == "ai-title":
+                    ai_title = d.get("aiTitle") or None
+                if first_msg is None and d.get("type") == "user":
+                    msg = d.get("message", {})
+                    content = msg.get("content", "")
+                    if isinstance(content, list):
+                        for part in content:
+                            if isinstance(part, dict) and part.get("type") == "text":
+                                content = part.get("text", "")
+                                break
+                    if content and isinstance(content, str):
+                        first_msg = content.strip()
     except OSError:
-        pass
-    return None
+        return None
+    return ai_title or first_msg
 
 
-def _make_display_name(first_msg: str | None, session_id: str) -> str:
-    if first_msg:
-        # Collapse whitespace, truncate
-        title = " ".join(first_msg.split())
+def _make_display_name(title: str | None, session_id: str) -> str:
+    if title:
+        title = " ".join(title.split())
         if len(title) > MAX_TITLE_LEN:
             title = title[:MAX_TITLE_LEN].rsplit(" ", 1)[0] + "…"
         return title
@@ -88,8 +94,8 @@ def discover_sessions() -> list[ClaudeSession]:
         started_ms = data.get("startedAt") or data.get("startupTime", 0)
         age_h = (time.time() * 1000 - started_ms) / 3_600_000
 
-        first_msg = _read_first_message(session_id, cwd)
-        display_name = _make_display_name(first_msg, session_id)
+        title = _read_session_title(session_id, cwd)
+        display_name = _make_display_name(title, session_id)
 
         sessions.append(ClaudeSession(
             session_id=session_id,

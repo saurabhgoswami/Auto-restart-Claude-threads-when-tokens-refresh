@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+venv/
+.venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# State (user-specific, should not be committed)
+state.json
+
+# Logs
+*.log
+*.err
+
+# IDE
+.idea/
+.vscode/
+*.swp

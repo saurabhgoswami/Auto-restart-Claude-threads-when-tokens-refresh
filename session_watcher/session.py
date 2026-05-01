@@ -21,8 +21,9 @@ class ClaudeSession:
 
 
 def _cwd_to_project_key(cwd: str) -> str:
-    """Convert /Users/foo/bar -> -Users-foo-bar (Claude's project dir encoding)."""
-    return cwd.replace("/", "-")
+    """Convert /Users/foo/My Dir -> -Users-foo-My-Dir (Claude's project dir encoding)."""
+    import re
+    return re.sub(r"[^a-zA-Z0-9]", "-", cwd)
 
 
 def _read_first_message(session_id: str, cwd: str) -> str | None:

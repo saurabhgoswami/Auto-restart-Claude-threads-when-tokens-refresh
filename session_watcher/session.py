@@ -4,107 +4,52 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-SESSIONS_DIR = Path.home() / ".claude" / "sessions"
-PROJECTS_DIR = Path.home() / ".claude" / "projects"
-MAX_TITLE_LEN = 52
+# Claude Code desktop stores sessions here with exact sidebar titles
+_CLAUDE_APP_SESSIONS = (
+    Path.home() / "Library" / "Application Support" / "Claude" / "claude-code-sessions"
+)
 
 
 @dataclass
 class ClaudeSession:
-    session_id: str
-    pid: int
+    session_id: str    # cliSessionId — passed to `claude --resume`
+    desktop_id: str    # local_XXXX — desktop app's own ID
     cwd: str
-    started_at: int   # epoch ms
-    version: str
-    display_name: str  # derived from first message
+    title: str         # exact title shown in Claude Code sidebar
     age_hours: float
-
-
-def _cwd_to_project_key(cwd: str) -> str:
-    """Convert /Users/foo/My Dir -> -Users-foo-My-Dir (Claude's project dir encoding)."""
-    import re
-    return re.sub(r"[^a-zA-Z0-9]", "-", cwd)
-
-
-def _read_session_title(session_id: str, cwd: str) -> str | None:
-    """Return the best title for a session from its JSONL file.
-
-    Priority: ai-title (matches what Claude Code shows in sidebar)
-              → first user message (fallback)
-    """
-    key = _cwd_to_project_key(cwd)
-    jsonl_path = PROJECTS_DIR / key / f"{session_id}.jsonl"
-    if not jsonl_path.exists():
-        return None
-    ai_title = None
-    first_msg = None
-    try:
-        with jsonl_path.open() as fh:
-            for line in fh:
-                try:
-                    d = json.loads(line.strip())
-                except json.JSONDecodeError:
-                    continue
-                if d.get("type") == "ai-title":
-                    ai_title = d.get("aiTitle") or None
-                if first_msg is None and d.get("type") == "user":
-                    msg = d.get("message", {})
-                    content = msg.get("content", "")
-                    if isinstance(content, list):
-                        for part in content:
-                            if isinstance(part, dict) and part.get("type") == "text":
-                                content = part.get("text", "")
-                                break
-                    if content and isinstance(content, str):
-                        first_msg = content.strip()
-    except OSError:
-        return None
-    return ai_title or first_msg
-
-
-def _make_display_name(title: str | None, session_id: str) -> str:
-    if title:
-        title = " ".join(title.split())
-        if len(title) > MAX_TITLE_LEN:
-            title = title[:MAX_TITLE_LEN].rsplit(" ", 1)[0] + "…"
-        return title
-    return f"Session {session_id[:8]}"
+    is_archived: bool
 
 
 def discover_sessions() -> list[ClaudeSession]:
     sessions: list[ClaudeSession] = []
-    if not SESSIONS_DIR.exists():
+
+    if not _CLAUDE_APP_SESSIONS.exists():
         return sessions
 
-    for path in SESSIONS_DIR.glob("*.json"):
+    for json_file in _CLAUDE_APP_SESSIONS.rglob("*.json"):
         try:
-            data = json.loads(path.read_text())
+            data = json.loads(json_file.read_text())
         except (json.JSONDecodeError, OSError):
             continue
 
-        # Only surface desktop-app sessions
-        if data.get("entrypoint", "") != "claude-desktop":
+        cli_session_id = data.get("cliSessionId", "")
+        if not cli_session_id:
             continue
 
-        session_id = data.get("sessionId", "")
-        if not session_id:
-            continue
+        is_archived = str(data.get("isArchived", "False")).lower() == "true"
+        title = data.get("title", "").strip() or f"Session {cli_session_id[:8]}"
 
-        cwd = data.get("cwd") or data.get("workingDirectory", "")
-        started_ms = data.get("startedAt") or data.get("startupTime", 0)
-        age_h = (time.time() * 1000 - started_ms) / 3_600_000
-
-        title = _read_session_title(session_id, cwd)
-        display_name = _make_display_name(title, session_id)
+        last_activity_ms = int(data.get("lastActivityAt") or data.get("createdAt") or 0)
+        age_h = (time.time() * 1000 - last_activity_ms) / 3_600_000
 
         sessions.append(ClaudeSession(
-            session_id=session_id,
-            pid=data.get("pid", 0),
-            cwd=cwd,
-            started_at=started_ms,
-            version=data.get("version", ""),
-            display_name=display_name,
+            session_id=cli_session_id,
+            desktop_id=data.get("sessionId", ""),
+            cwd=data.get("cwd", ""),
+            title=title,
             age_hours=round(age_h, 1),
+            is_archived=is_archived,
         ))
 
-    return sorted(sessions, key=lambda s: s.started_at, reverse=True)
+    # Sort newest activity first, archived last
+    return sorted(sessions, key=lambda s: (s.is_archived, s.age_hours))

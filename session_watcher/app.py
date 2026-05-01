@@ -34,8 +34,10 @@ class SessionWatcherApp(rumps.App):
 
         if self._sessions:
             for s in self._sessions:
+                if s.is_archived:
+                    continue
                 is_watched = s.session_id in self.state.watched
-                label = f"{'✓' if is_watched else '○'}  {s.display_name}  ({s.age_hours}h ago)"
+                label = f"{'✓' if is_watched else '○'}  {s.title}  ({s.age_hours}h ago)"
                 item = rumps.MenuItem(label, callback=self._toggle_session)
                 item._session_id = s.session_id
                 self._session_items[s.session_id] = item
@@ -104,7 +106,7 @@ class SessionWatcherApp(rumps.App):
     def _do_restart(self, session_id: str):
         # Find display name for notification
         name = next(
-            (s.display_name for s in self._sessions if s.session_id == session_id),
+            (s.title for s in self._sessions if s.session_id == session_id),
             session_id[:8],
         )
         try:
